@@ -39,6 +39,10 @@
     <p class="preferences-copy">Enabled platforms appear as destinations and receive Crossposter’s page integration. Choose which should be selected by default.</p>
     <div class="platform-preference-head"><span>Platform</span><span>Enabled</span><span>Default</span></div>
     <div id="settingsDestinations" class="preferences-options"></div>
+    <label class="mastodon-instance-setting" for="settingsMastodonInstance"><strong>Mastodon server</strong>
+      <input id="settingsMastodonInstance" type="text" inputmode="url" spellcheck="false" autocomplete="url" placeholder="mastodon.social" aria-describedby="mastodonInstanceHint">
+    </label>
+    <p id="mastodonInstanceHint" class="preferences-copy">Enter the server where you sign in (for example, mastodon.social). Crossposter requests access only to this server.</p>
     <label class="inline-action-preference"><span><strong>Show Crosspost shortcuts</strong><small>Add Crosspost to post actions on X, Facebook, Threads, and Substack.</small></span><input id="settingsInlineActions" type="checkbox"></label>
     <p id="settingsError" class="errors" role="alert"></p>
     <details class="settings-danger">

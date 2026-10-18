@@ -17,6 +17,7 @@ import { CROSSPOST_SESSIONS_KEY, crosspostSessionIdFromUrl } from "./shared/cros
 import { settleVideoResolution } from "./shared/video-resolution-state.js";
 import { incompletePlatformPermissions, platformLabel, requestCompletePlatformPermissions } from "./shared/platform-permissions.js";
 import { feedbackOverlay } from "./shared/feedback-overlay.js";
+import { MASTODON_INSTANCE_KEY, mastodonOriginPattern, normalizeMastodonInstance } from "./shared/mastodon.js";
 
 const showInfo = document.querySelector("#showInfo");
 // Onboarding markup is only needed when the info button is used; import it on
@@ -55,7 +56,7 @@ const moduleStartAt = performance.now();
 // background event page (a visible cost on Firefox). Messaging stays as the
 // fallback for snapshots that have not landed yet.
 const [stored, directSessions] = await Promise.all([
-  ext.storage.local.get(["pendingDraft", DEFAULT_DESTINATIONS_KEY, ENABLED_PLATFORMS_KEY, KNOWN_PLATFORMS_KEY, SHOW_INLINE_ACTIONS_KEY, CLIP_CUT_KEY]),
+  ext.storage.local.get(["pendingDraft", DEFAULT_DESTINATIONS_KEY, ENABLED_PLATFORMS_KEY, KNOWN_PLATFORMS_KEY, SHOW_INLINE_ACTIONS_KEY, CLIP_CUT_KEY, MASTODON_INSTANCE_KEY]),
   sessionId ? ext.storage.session.get(CROSSPOST_SESSIONS_KEY).catch(() => null) : null
 ]);
 let crosspostSession = directSessions?.[CROSSPOST_SESSIONS_KEY]?.find(candidate => candidate?.id === sessionId) || null;
@@ -83,9 +84,11 @@ let defaultDestinations = normalizeDefaultDestinations(stored[DEFAULT_DESTINATIO
 let enabledPlatforms = storedEnabledPlatforms(stored);
 let showInlineActions = inlineActionsEnabled(stored[SHOW_INLINE_ACTIONS_KEY]);
 let clipCut = normalizeClipCut(stored[CLIP_CUT_KEY]);
+let mastodonInstance = normalizeMastodonInstance(stored[MASTODON_INSTANCE_KEY]);
 const text = document.querySelector("#postText"), destinations = document.querySelector("#destinations");
 const settingsDialog = document.querySelector("#settingsDialog"), settingsDestinations = document.querySelector("#settingsDestinations");
 const settingsInlineActions = document.querySelector("#settingsInlineActions"), settingsError = document.querySelector("#settingsError");
+const settingsMastodonInstance = document.querySelector("#settingsMastodonInstance");
 const settingsClearData = document.querySelector("#settingsClearData"), settingsClearError = document.querySelector("#settingsClearError");
 const historyDialog = document.querySelector("#historyDialog"), historyList = document.querySelector("#historyList");
 const historyHint = document.querySelector("#historyHint");
@@ -473,6 +476,7 @@ function openSettings() {
   }).join(""));
   settingsDestinations.querySelectorAll("[data-platform-enabled]").forEach(input => input.onchange = () => updatePlatformPreferenceRow(input.closest("[data-platform]")));
   settingsInlineActions.checked = showInlineActions;
+  settingsMastodonInstance.value = mastodonInstance;
   settingsError.textContent = "";
   settingsClearError.textContent = "";
   settingsDialog.querySelector(".settings-danger").open = false;
@@ -482,7 +486,7 @@ function openSettings() {
 
 function settingsFormState() {
   const rows = [...settingsDestinations.querySelectorAll("[data-platform]")].map(row => [row.dataset.platform, row.querySelector("[data-platform-enabled]").checked, row.querySelector("[data-platform-default]").checked]);
-  return JSON.stringify([rows, settingsInlineActions.checked]);
+  return JSON.stringify([rows, settingsInlineActions.checked, settingsMastodonInstance.value]);
 }
 
 function updatePlatformPreferenceRow(row) {
@@ -567,7 +571,13 @@ async function saveSettings() {
   const nextDefaults = normalizeDefaultDestinations(rows.filter(row => row.querySelector("[data-platform-default]").checked).map(row => row.dataset.platform));
   const nextInlineActions = settingsInlineActions.checked;
   settingsError.textContent = "";
-  const permissionResult = await requestCompletePlatformPermissions(ext.permissions, nextEnabled);
+  let nextMastodonInstance;
+  try { nextMastodonInstance = normalizeMastodonInstance(settingsMastodonInstance.value); }
+  catch (error) { settingsError.textContent = error.message; settingsMastodonInstance.focus(); return; }
+  // Request both static platform origins and the selected Mastodon instance in
+  // the click handler, before the first await (required for Firefox permissions).
+  const permissionResult = await requestCompletePlatformPermissions(ext.permissions, nextEnabled,
+    nextEnabled.includes("mastodon") ? [mastodonOriginPattern(nextMastodonInstance)] : []);
   if (!permissionResult.ok) {
     const platforms = permissionResult.missing.map(platformLabel).join(", ");
     settingsError.textContent = permissionResult.error || `Allow every requested permission for ${platforms}, or disable those platforms.`;
@@ -577,7 +587,8 @@ async function saveSettings() {
     type: "APPLY_PLATFORM_PREFERENCES",
     enabledPlatforms: nextEnabled,
     defaultDestinations: nextDefaults,
-    showInlineActions: nextInlineActions
+    showInlineActions: nextInlineActions,
+    mastodonInstance: nextMastodonInstance
   }).catch(error => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
   if (!response?.ok) {
     settingsError.textContent = response?.error || "Platform settings could not be saved.";
@@ -586,6 +597,8 @@ async function saveSettings() {
   enabledPlatforms = response.enabledPlatforms;
   defaultDestinations = response.defaultDestinations;
   showInlineActions = response.showInlineActions;
+  mastodonInstance = response.mastodonInstance;
+  stored[MASTODON_INSTANCE_KEY] = mastodonInstance;
   stored[ENABLED_PLATFORMS_KEY] = enabledPlatforms;
   stored[DEFAULT_DESTINATIONS_KEY] = defaultDestinations;
   stored[SHOW_INLINE_ACTIONS_KEY] = showInlineActions;
@@ -1655,7 +1668,8 @@ async function publish() {
   // Request each selected platform's complete page/API/media bundle while the
   // extension-page click still carries a user gesture. Recheck the source too
   // in case its access was revoked while this draft was open.
-  const hostPermissionRequest = requestCompletePlatformPermissions(ext.permissions, [draft.sourceNetwork, ...networkIds]);
+  const hostPermissionRequest = requestCompletePlatformPermissions(ext.permissions, [draft.sourceNetwork, ...networkIds],
+    networkIds.includes("mastodon") ? [mastodonOriginPattern(mastodonInstance)] : []);
   // Firefox: sidebarAction.open() only works inside a user-action handler and
   // the gesture does not survive messaging to the background — open the
   // sidebar here, synchronously, while the Continue click is still live.

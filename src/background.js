@@ -19,8 +19,10 @@ import { markVideoResolving, settleVideoResolution } from "./shared/video-resolu
 import { resolvePageVideoHint } from "./shared/source-video.js";
 import { allPlatformIds, incompletePlatformPermissions, missingSitePlatforms, SITE_ACCESS_DISMISSED_KEY, SITE_ACCESS_PAGE } from "./shared/platform-permissions.js";
 import { buildFeedbackReport, isSignInUrl, SIGN_IN_PATH, signedOutMessage, storeFeedbackReport } from "./shared/feedback.js";
+import { MASTODON_INSTANCE_KEY, DEFAULT_MASTODON_INSTANCE, mastodonHomeUrl, normalizeMastodonInstance } from "./shared/mastodon.js";
 
 const MENU_ID = "crosspost-studio";
+let currentMastodonInstance = DEFAULT_MASTODON_INSTANCE;
 let trayWindowId = null;
 const scopedSidePanel = Boolean(ext.sidePanel?.setOptions && ext.sidePanel?.open);
 let sidePanelOptionsQueue = Promise.resolve();
@@ -197,7 +199,7 @@ async function promptForMissingSiteAccess() {
 
 ext.storage.onChanged?.addListener((changes, areaName) => {
   if (areaName !== "local") return;
-  if (changes[ENABLED_PLATFORMS_KEY]) synchronizePlatformContentScripts().catch(error => console.warn("Crossposter content-script registration failed:", error));
+  if (changes[ENABLED_PLATFORMS_KEY] || changes[MASTODON_INSTANCE_KEY]) synchronizePlatformContentScripts().catch(error => console.warn("Crossposter content-script registration failed:", error));
   if (changes[SHOW_INLINE_ACTIONS_KEY]) broadcastInlineActionPreference(inlineActionsEnabled(changes[SHOW_INLINE_ACTIONS_KEY].newValue)).catch(() => {});
 });
 
@@ -207,7 +209,7 @@ ext.contextMenus.onClicked.addListener((info, tab) => {
   // request here as long as nothing is awaited first. When the site is already
   // allowed this resolves silently; otherwise the user sees one prompt on the
   // page itself instead of a dead composer.
-  const gesture = requestSourceAccessInGesture(platformContentScriptForUrl(tab?.url || tab?.pendingUrl || "")?.platformId);
+  const gesture = requestSourceAccessInGesture(platformContentScriptForUrl(tab?.url || tab?.pendingUrl || "", currentMastodonInstance)?.platformId);
   handleCrosspostMenuClick(info, tab, gesture).catch(error => console.warn("Crossposter capture failed:", error));
 });
 
@@ -244,7 +246,7 @@ async function handleCrosspostMenuClick(info, tab, gesture) {
 }
 
 async function capturedVideoHint(tab, frameId) {
-  const platform = platformContentScriptForUrl(tab?.url || tab?.pendingUrl || "");
+  const platform = platformContentScriptForUrl(tab?.url || tab?.pendingUrl || "", currentMastodonInstance);
   const resolved = await resolvePageVideoHint(platform?.platformId, { ext, tab, frameId }).catch(() => null);
   if (resolved?.src) return resolved;
   const hint = await sendContentMessage(tab.id, { type: "VIDEO_INFO" }, frameId);
@@ -268,9 +270,9 @@ async function reinjectContentScripts(tabId, frameId) {
   if (!ext.scripting?.executeScript) return false;
   const tab = await ext.tabs.get(tabId);
   const preferences = await readPlatformPreferences();
-  const files = contentScriptFilesForUrl(tab.url, preferences.enabledPlatforms);
+  const files = contentScriptFilesForUrl(tab.url, preferences.enabledPlatforms, currentMastodonInstance);
   if (!files.length) return false;
-  const platform = platformContentScriptForUrl(tab.url);
+  const platform = platformContentScriptForUrl(tab.url, currentMastodonInstance);
   const target = {
     tabId,
     ...(Number.isInteger(frameId) ? { frameIds: [frameId] } : platform?.allFrames ? { allFrames: true } : {})
@@ -356,22 +358,25 @@ async function sendLinkedInComposerMessage(tabId, message) {
 }
 
 async function readPlatformPreferences() {
-  const stored = await ext.storage.local.get([ENABLED_PLATFORMS_KEY, KNOWN_PLATFORMS_KEY, SHOW_INLINE_ACTIONS_KEY, DEFAULT_DESTINATIONS_KEY]);
+  const stored = await ext.storage.local.get([ENABLED_PLATFORMS_KEY, KNOWN_PLATFORMS_KEY, SHOW_INLINE_ACTIONS_KEY, DEFAULT_DESTINATIONS_KEY, MASTODON_INSTANCE_KEY]);
+  currentMastodonInstance = normalizeMastodonInstance(stored[MASTODON_INSTANCE_KEY]);
   return {
     enabledPlatforms: storedEnabledPlatforms(stored),
     showInlineActions: inlineActionsEnabled(stored[SHOW_INLINE_ACTIONS_KEY]),
-    defaultDestinations: normalizeDefaultDestinations(stored[DEFAULT_DESTINATIONS_KEY])
+    defaultDestinations: normalizeDefaultDestinations(stored[DEFAULT_DESTINATIONS_KEY]),
+    mastodonInstance: currentMastodonInstance
   };
 }
 
 function synchronizePlatformContentScripts(enabledPlatforms) {
   platformContentScriptSyncQueue = platformContentScriptSyncQueue.catch(() => {}).then(async () => {
-    const enabled = normalizeEnabledPlatforms(enabledPlatforms ?? (await readPlatformPreferences()).enabledPlatforms);
+    const preferences = await readPlatformPreferences();
+    const enabled = normalizeEnabledPlatforms(enabledPlatforms ?? preferences.enabledPlatforms);
     const managedIds = new Set([...PLATFORM_CONTENT_SCRIPTS.map(script => script.id), HANDOFF_OVERLAY_SCRIPT.id]);
     const registered = await ext.scripting.getRegisteredContentScripts();
     const existingIds = registered.map(script => script.id).filter(id => managedIds.has(id));
     if (existingIds.length) await ext.scripting.unregisterContentScripts({ ids: existingIds });
-    const desired = registeredPlatformContentScripts(enabled);
+    const desired = registeredPlatformContentScripts(enabled, preferences.mastodonInstance);
     if (desired.length) await ext.scripting.registerContentScripts(desired);
     return enabled;
   });
@@ -384,7 +389,7 @@ async function reinjectOpenPlatformTabs(enabledPlatforms) {
   const tabs = await ext.tabs.query({});
   await Promise.all(tabs.map(async tab => {
     if (!Number.isInteger(tab.id)) return;
-    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "");
+    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "", currentMastodonInstance);
     if (!platform || platform.activeTabOnly || (!platform.sourceOnly && !enabled.has(platform.platformId))) return;
     const target = { tabId: tab.id, ...(platform.allFrames ? { allFrames: true } : {}) };
     await ext.scripting.executeScript({ target, files: ["content.js", platform.file] }).catch(() => {});
@@ -396,15 +401,17 @@ async function applyPlatformPreferences(message) {
   const enabledPlatforms = normalizeEnabledPlatforms(message.enabledPlatforms);
   const showInlineActions = inlineActionsEnabled(message.showInlineActions);
   const defaultDestinations = normalizeDefaultDestinations(message.defaultDestinations);
+  const mastodonInstance = normalizeMastodonInstance(message.mastodonInstance);
   await ext.storage.local.set({
     [ENABLED_PLATFORMS_KEY]: enabledPlatforms,
     [KNOWN_PLATFORMS_KEY]: [...PLATFORM_IDS],
     [SHOW_INLINE_ACTIONS_KEY]: showInlineActions,
-    [DEFAULT_DESTINATIONS_KEY]: defaultDestinations
+    [DEFAULT_DESTINATIONS_KEY]: defaultDestinations,
+    [MASTODON_INSTANCE_KEY]: mastodonInstance
   });
   await synchronizePlatformContentScripts(enabledPlatforms);
   await reconcileOpenPlatformTabs(previous.enabledPlatforms, enabledPlatforms, showInlineActions);
-  return { enabledPlatforms, showInlineActions, defaultDestinations };
+  return { enabledPlatforms, showInlineActions, defaultDestinations, mastodonInstance };
 }
 
 async function reconcileOpenPlatformTabs(previousEnabled, enabledPlatforms, showInlineActions) {
@@ -412,7 +419,7 @@ async function reconcileOpenPlatformTabs(previousEnabled, enabledPlatforms, show
   const tabs = await ext.tabs.query({});
   await Promise.all(tabs.map(async tab => {
     if (!Number.isInteger(tab.id)) return;
-    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "");
+    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "", currentMastodonInstance);
     if (!platform) return;
     if (platform.activeTabOnly) return;
     if (!platform.sourceOnly && !enabled.has(platform.platformId)) {
@@ -438,7 +445,7 @@ async function broadcastInlineActionPreference(enabled) {
   const preferences = await readPlatformPreferences();
   const tabs = await ext.tabs.query({});
   await Promise.all(tabs.map(tab => {
-    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "");
+    const platform = platformContentScriptForUrl(tab.url || tab.pendingUrl || "", currentMastodonInstance);
     if (!platform || !preferences.enabledPlatforms.includes(platform.platformId) || !Number.isInteger(tab.id)) return null;
     return ext.tabs.sendMessage(tab.id, { type: "SET_INLINE_ACTIONS", enabled }).catch(() => {});
   }));
@@ -1164,7 +1171,10 @@ async function openNativeHandoffs(sessionId, attemptId, networks, handoff, sourc
   if (!isCurrentHandoff(session.id, attemptId)) return { results: [], tabGroupId: session.groupId ?? null, groupError: "", cancelled: true };
   // Fill in NATIVE_DESTINATIONS order whatever order the request lists.
   const requested = new Set(networks || []);
-  const targets = NATIVE_DESTINATIONS.filter(destination => requested.has(destination.id));
+  const targets = NATIVE_DESTINATIONS.filter(destination => requested.has(destination.id))
+    .map(destination => destination.id === "mastodon"
+      ? { ...destination, homeUrl: mastodonHomeUrl(currentMastodonInstance) }
+      : destination);
   if (!targets.length) throw new Error("Choose at least one supported destination.");
   const entries = [];
   session.handoff = { ...handoff, attemptId: String(attemptId || ""), networks: targets.map(target => target.id), state: "filling", progress: {}, error: "", results: [] };
@@ -1250,7 +1260,8 @@ async function retryNativeHandoff(sessionId, network) {
   await backgroundStateReady.catch(() => {});
   const session = crosspostSessions.get(sessionId);
   if (!session) throw new Error("This crosspost session is no longer available.");
-  const target = nativeDestination(network);
+  const original = nativeDestination(network);
+  const target = original?.id === "mastodon" ? { ...original, homeUrl: mastodonHomeUrl(currentMastodonInstance) } : original;
   const handoff = session.handoff;
   if (!target || !handoff?.networks?.includes(network)) throw new Error("That destination is not part of this crosspost.");
   if (handoff.state !== "ready" || handoff.retrying) throw new Error("Wait for the crosspost to finish before retrying.");
