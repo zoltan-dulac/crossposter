@@ -9,6 +9,7 @@ export function platformLabel(id) {
     linkedin: "LinkedIn",
     x: "X",
     bluesky: "Bluesky",
+    mastodon: "Mastodon",
     instagram: "Instagram",
     threads: "Threads",
     facebook: "Facebook",
@@ -51,9 +52,10 @@ export async function incompletePlatformPermissions(permissionApi, platformIds =
   return checks.filter(Boolean);
 }
 
-export async function requestCompletePlatformPermissions(permissionApi, platformIds = []) {
+export async function requestCompletePlatformPermissions(permissionApi, platformIds = [], extraOrigins = []) {
   const ids = platformIdsWithPermissionGroups(platformIds);
-  if (!ids.length) return { ok: true, missing: [], requested: false, error: "" };
+  const origins = [...new Set([...platformOriginsForIds(ids), ...extraOrigins])];
+  if (!origins.length) return { ok: true, missing: [], requested: false, error: "" };
   if (!permissionApi?.request) {
     return { ok: false, missing: ids, requested: false, error: "Crossposter cannot request site access in this browser." };
   }
@@ -62,10 +64,15 @@ export async function requestCompletePlatformPermissions(permissionApi, platform
   // with the extension-page click that initiated the operation.
   let error = "";
   try {
-    await permissionApi.request({ origins: platformOriginsForIds(ids) });
+    await permissionApi.request({ origins });
   } catch (requestError) {
     error = requestError instanceof Error ? requestError.message : String(requestError);
   }
   const missing = await incompletePlatformPermissions(permissionApi, ids);
+  if (extraOrigins.length) {
+    try {
+      if (!await permissionApi.contains({ origins: extraOrigins })) missing.push("mastodon");
+    } catch { missing.push("mastodon"); }
+  }
   return { ok: !missing.length, missing, requested: true, error };
 }

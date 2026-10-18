@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Crossposter",
+  "name": "Crossposter (Mastodon test)",
   "version": "0.3.8",
   "minimum_chrome_version": "148",
   "description": "A free, open-source browser extension to share social media post – text, images, and even video – from one platform to another.",
@@ -68,5 +68,8 @@
   },
   "side_panel": {
     "default_path": "tray.html"
-  }
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ]
 }

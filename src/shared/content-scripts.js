@@ -1,3 +1,5 @@
+import { mastodonOriginPattern, normalizeMastodonInstance } from "./mastodon.js";
+
 export const CONTENT_SCRIPT_CORE = "content.js";
 // Covers a destination tab while a handoff fills it (handoff-overlay.js). It
 // starts with the document so it can hide the page's own loading too.
@@ -26,6 +28,8 @@ export const PLATFORM_CONTENT_SCRIPTS = [
   { platformId: "linkedin", id: "crossposter-linkedin", file: "platforms/linkedin/content.js", matches: PLATFORM_PERMISSION_GROUPS.linkedin.documents, allFrames: true, hosts: host => host === "www.linkedin.com" },
   { platformId: "x", id: "crossposter-x", file: "platforms/x/content.js", matches: PLATFORM_PERMISSION_GROUPS.x.documents, hosts: host => host === "x.com" || host === "twitter.com" || host.endsWith(".twitter.com") },
   { platformId: "bluesky", id: "crossposter-bluesky", file: "platforms/bluesky/content.js", matches: PLATFORM_PERMISSION_GROUPS.bluesky.documents, hosts: host => host === "bsky.app" },
+  // Mastodon is destination-only for now. Its match pattern is supplied by the user at runtime.
+  { platformId: "mastodon", id: "crossposter-mastodon", file: "platforms/mastodon/content.js", matches: [], hosts: () => false },
   { platformId: "upscrolled", id: "crossposter-upscrolled", file: "platforms/upscrolled/content.js", matches: PLATFORM_PERMISSION_GROUPS.upscrolled.documents, hosts: host => host === "upscrolled.com" || host === "www.upscrolled.com" },
   { platformId: "instagram", id: "crossposter-instagram", file: "platforms/instagram/content.js", matches: PLATFORM_PERMISSION_GROUPS.instagram.documents, hosts: host => host === "instagram.com" || host === "www.instagram.com" },
   { platformId: "threads", id: "crossposter-threads", file: "platforms/threads/content.js", matches: PLATFORM_PERMISSION_GROUPS.threads.documents, hosts: host => host === "threads.com" || host === "www.threads.com" },
@@ -43,11 +47,14 @@ export function registerPlatformContentScript(script) {
   return script;
 }
 
-export function platformContentScriptForUrl(url) {
-  let host;
-  try { host = new URL(url).hostname.toLowerCase(); }
+export function platformContentScriptForUrl(url, mastodonInstance = "") {
+  let parsed;
+  try { parsed = new URL(url); }
   catch { return null; }
-  return PLATFORM_CONTENT_SCRIPTS.find(item => item.hosts(host)) || null;
+  if (mastodonInstance && parsed.protocol === "https:" && parsed.origin === normalizeMastodonInstance(mastodonInstance)) {
+    return PLATFORM_CONTENT_SCRIPTS.find(item => item.platformId === "mastodon") || null;
+  }
+  return PLATFORM_CONTENT_SCRIPTS.find(item => item.hosts(parsed.hostname.toLowerCase())) || null;
 }
 
 export function platformDocumentUrlPatterns() {
@@ -61,25 +68,25 @@ export function platformOriginsForIds(platformIds = []) {
   }))];
 }
 
-export function contentScriptFilesForUrl(url, enabledPlatforms) {
-  const adapter = platformContentScriptForUrl(url);
+export function contentScriptFilesForUrl(url, enabledPlatforms, mastodonInstance = "") {
+  const adapter = platformContentScriptForUrl(url, mastodonInstance);
   const enabled = Array.isArray(enabledPlatforms) ? new Set(enabledPlatforms) : null;
   if (adapter && enabled && !adapter.sourceOnly && !enabled.has(adapter.platformId)) return [];
   return adapter ? [CONTENT_SCRIPT_CORE, adapter.file] : [];
 }
 
-export function registeredPlatformContentScripts(enabledPlatforms) {
+export function registeredPlatformContentScripts(enabledPlatforms, mastodonInstance = "") {
   const enabled = new Set(enabledPlatforms || PLATFORM_CONTENT_SCRIPTS.map(item => item.platformId));
   const platforms = PLATFORM_CONTENT_SCRIPTS.filter(item => !item.activeTabOnly && (item.sourceOnly || enabled.has(item.platformId)));
   const scripts = platforms.map(item => ({
     id: item.id,
-    matches: [...item.matches],
+    matches: item.platformId === "mastodon" ? [mastodonOriginPattern(mastodonInstance)] : [...item.matches],
     js: [CONTENT_SCRIPT_CORE, item.file],
     runAt: "document_idle",
     persistAcrossSessions: true,
     ...(item.allFrames ? { allFrames: true } : {})
   }));
-  const destinations = [...new Set(platforms.filter(item => !item.sourceOnly).flatMap(item => item.matches))];
+  const destinations = [...new Set(scripts.flatMap(script => script.matches))];
   if (destinations.length) {
     scripts.push({ id: HANDOFF_OVERLAY_SCRIPT.id, matches: destinations, js: [HANDOFF_OVERLAY_SCRIPT.file], runAt: "document_start", persistAcrossSessions: true });
   }

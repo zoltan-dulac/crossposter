@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Crossposter",
+  "name": "Crossposter (Mastodon test)",
   "version": "0.3.8",
   "description": "A free, open-source browser extension to share social media post – text, images, and even video – from one platform to another.",
   "icons": {
@@ -74,7 +74,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "crossposter@mochi.is",
+      "id": "crossposter-mastodon-test@local",
       "strict_min_version": "153.0",
       "data_collection_permissions": {
         "required": [
@@ -86,5 +86,8 @@
         ]
       }
     }
-  }
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ]
 }
