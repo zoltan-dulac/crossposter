@@ -5,8 +5,17 @@
   const COMPOSER = "form.compose-form textarea.autosuggest-textarea__textarea, form.compose-form textarea[aria-autocomplete='list'], form.compose-form textarea";
   const textOf = el => String(el?.innerText || el?.textContent || '').trim();
   function webUrl(input) {
-    try { const url = new URL(input, location.href); return ['http:', 'https:'].includes(url.protocol) ? url.href : ''; }
-    catch { return ''; }
+    // new URL(undefined, location.href) yields /undefined instead of throwing.
+    // Never manufacture a URL from a missing Mastodon API property or link.
+    if (typeof input !== 'string') return '';
+    const value = input.trim();
+    if (!value || /^(?:undefined|null)$/i.test(value)) return '';
+    try {
+      const url = new URL(value, location.href);
+      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      if (url.pathname === '/undefined' || url.pathname === '/null') return '';
+      return url.href;
+    } catch { return ''; }
   }
   function selectedStatus(post) {
     return post?.matches?.('.status[data-id], .detailed-status[data-id]') ? post
@@ -56,7 +65,25 @@
   }
   function permalink(post) {
     const anchor = post?.querySelector?.('a.status__relative-time[href], a.detailed-status__datetime[href]');
-    return webUrl(anchor?.href || anchor?.getAttribute?.('href')) || (location.pathname.match(/^\/@[^/]+\/\d+\/?$/) ? location.href : '');
+    return webUrl(anchor?.href || anchor?.getAttribute?.('href')) ||
+      (location.pathname.match(/^\/@[^/]+\/\d+\/?$/) ? location.href : '');
+  }
+  function originalPostUrl(status, post) {
+    // url is the public post page; uri can be a federated ActivityPub URI.
+    // Both are optional on some API responses, so inspect the page's
+    // permalink rather than turning undefined into an apparent URL.
+    const fromApi = webUrl(status?.url) || webUrl(status?.uri);
+    if (fromApi) return fromApi;
+    const fromPost = permalink(post);
+    if (fromPost) return fromPost;
+    // For a local author, Mastodon's /@handle/id route is unambiguous.
+    // Do not make up a local route for a remote/federated account.
+    const account = String(status?.account?.acct || status?.account?.username || '');
+    const id = String(status?.id || '');
+    if (/^[a-z0-9_]+$/i.test(account) && /^\d+$/.test(id)) {
+      return `${location.origin}/@${encodeURIComponent(account)}/${id}`;
+    }
+    return '';
   }
   function domPublic(post) {
     const el = selectedStatus(post);
@@ -77,11 +104,13 @@
     if (status) {
       if (status.visibility !== 'public') throw new Error('Only public Mastodon posts can be cross-posted; unlisted, followers-only and direct posts are excluded.');
       const parsed = parseContent(status.content);
+      const sourceUrl = originalPostUrl(status, post);
+      if (!sourceUrl) throw new Error('Could not determine the original Mastodon post URL. Open its post page and try again.');
       const navHandle = (document.querySelector('.navigation-bar__profile a[href^="/@"]')?.getAttribute('href') || '').match(/^\/@([^/]+)/)?.[1]?.toLowerCase();
       const authorHandle = String(status.account?.acct || status.account?.username || '').toLowerCase();
       result = {
         text: parsed.text, media: mediaFromApi(status), links: linksFromApi(status, parsed),
-        sourceUrl: webUrl(status.url || status.uri) || permalink(post),
+        sourceUrl,
         sourceAuthor: status.account?.display_name || status.account?.acct || status.account?.username || '',
         sourceAccount: status.account?.acct || '', sourceIsOwn: Boolean(navHandle && navHandle === authorHandle),
         sourceContentWarning: String(status.spoiler_text || ''), sourceSensitive: status.sensitive === true
@@ -96,7 +125,9 @@
         kind: el.tagName === 'VIDEO' ? 'video' : 'image', url: webUrl(el.currentSrc || el.src), alt: String(el.alt || ''),
         ...(el.tagName === 'VIDEO' ? { poster: webUrl(el.poster) } : {})
       })).filter(item => item.url).slice(0, 4);
-      result = { text: textOf(content), links: [], media, sourceUrl: permalink(post),
+      const sourceUrl = permalink(post);
+      if (!sourceUrl) throw new Error('Could not determine the original Mastodon post URL. Open its post page and try again.');
+      result = { text: textOf(content), links: [], media, sourceUrl,
         sourceAuthor: textOf(root?.querySelector?.('.display-name__html')), sourceAccount: '',
         sourceIsOwn: false, sourceContentWarning: '', sourceSensitive: false };
     }
