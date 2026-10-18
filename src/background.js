@@ -19,6 +19,7 @@ import { markVideoResolving, settleVideoResolution } from "./shared/video-resolu
 import { resolvePageVideoHint } from "./shared/source-video.js";
 import { allPlatformIds, incompletePlatformPermissions, missingSitePlatforms, SITE_ACCESS_DISMISSED_KEY, SITE_ACCESS_PAGE } from "./shared/platform-permissions.js";
 import { buildFeedbackReport, isSignInUrl, SIGN_IN_PATH, signedOutMessage, storeFeedbackReport } from "./shared/feedback.js";
+import { mastodonOriginPattern } from "./shared/mastodon.js";
 import { MASTODON_INSTANCE_KEY, DEFAULT_MASTODON_INSTANCE, mastodonHomeUrl, normalizeMastodonInstance } from "./shared/mastodon.js";
 
 const MENU_ID = "crosspost-studio";
@@ -103,12 +104,13 @@ if (ext.webRequest?.onBeforeRequest) {
 }
 
 ext.runtime.onInstalled.addListener(async details => {
+  await readPlatformPreferences();
   await ext.contextMenus.removeAll();
   await ext.contextMenus.create({
     id: MENU_ID,
     title: "Crosspost",
     contexts: ["page", "selection", "link", "image", "video"],
-    documentUrlPatterns: platformDocumentUrlPatterns()
+    documentUrlPatterns: [...platformDocumentUrlPatterns(), mastodonOriginPattern(currentMastodonInstance)]
   });
   const enabled = await synchronizePlatformContentScripts().catch(error => {
     console.warn("Crossposter content-script registration failed:", error);
@@ -121,6 +123,7 @@ ext.runtime.onInstalled.addListener(async details => {
   await sweepStoredData().catch(error => console.warn("Crossposter storage cleanup failed:", error));
 });
 ext.runtime.onStartup?.addListener(async () => {
+  await updateMastodonContextMenu().catch(() => {});
   const enabled = await synchronizePlatformContentScripts().catch(error => {
     console.warn("Crossposter content-script registration failed:", error);
     return [];
@@ -200,8 +203,16 @@ async function promptForMissingSiteAccess() {
 ext.storage.onChanged?.addListener((changes, areaName) => {
   if (areaName !== "local") return;
   if (changes[ENABLED_PLATFORMS_KEY] || changes[MASTODON_INSTANCE_KEY]) synchronizePlatformContentScripts().catch(error => console.warn("Crossposter content-script registration failed:", error));
+  if (changes[MASTODON_INSTANCE_KEY]) updateMastodonContextMenu().catch(error => console.warn("Mastodon context menu update failed:", error));
   if (changes[SHOW_INLINE_ACTIONS_KEY]) broadcastInlineActionPreference(inlineActionsEnabled(changes[SHOW_INLINE_ACTIONS_KEY].newValue)).catch(() => {});
 });
+
+async function updateMastodonContextMenu() {
+  const settings = await readPlatformPreferences();
+  await ext.contextMenus.update(MENU_ID, { documentUrlPatterns: [
+    ...platformDocumentUrlPatterns(), mastodonOriginPattern(settings.mastodonInstance)
+  ] });
+}
 
 ext.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
@@ -231,6 +242,12 @@ async function handleCrosspostMenuClick(info, tab, gesture) {
   // fall back to the top document and mix several posts together.
   const frameId = Number.isInteger(info.frameId) ? info.frameId : undefined;
   try { captured = await sendContentMessage(tab.id, { type: "CAPTURE_POST" }, frameId) || {}; } catch {}
+  if (captured.error) throw new Error(captured.error);
+  // Never silently capture only the clicked image when a Mastodon post could
+  // not be verified; doing so could disclose restricted or hidden content.
+  if (platformContentScriptForUrl(tab.url, currentMastodonInstance)?.platformId === "mastodon" && !captured.capturedFromPost) {
+    throw new Error("Mastodon capture failed: right-click inside a public post.");
+  }
   const media = chooseContextMedia(info, captured);
   const videoHint = media.some(item => item.kind === "video")
     ? capturedVideoHint(tab, frameId)

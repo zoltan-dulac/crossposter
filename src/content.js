@@ -76,6 +76,7 @@
       sourceUrl: adapter?.sourceUrl?.({ post, helpers }) || location.href,
       sourceAuthor: adapter?.sourceAuthor?.({ post, helpers }) || firstText(post, ["[rel='author']", ".author", "[itemprop='author']"]),
       sourceIsOwn: Boolean(adapter?.isOwnPost?.({ post, helpers })),
+      ...adapter?.captureExtras?.({ post, helpers }),
       capturedFromPost: post !== document.body
     };
   }
@@ -836,13 +837,34 @@
   });
 
   const listener = (message, _sender, sendResponse) => {
+    if (message.type === "CAPTURE_ERROR") {
+      document.querySelector("#crossposter-capture-error")?.remove();
+      const notice = document.createElement("div");
+      notice.id = "crossposter-capture-error";
+      notice.setAttribute("role", "alert");
+      Object.assign(notice.style, { position: "fixed", zIndex: "2147483647", bottom: "20px", right: "20px",
+        maxWidth: "min(400px, 90vw)", padding: "14px", borderRadius: "6px", background: "#fff",
+        color: "#111", border: "2px solid #222", boxShadow: "0 4px 18px #0005" });
+      notice.textContent = `Crossposter: ${String(message.error || "Could not capture post.")}`;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "Dismiss";
+      close.style.marginLeft = "10px";
+      close.addEventListener("click", () => notice.remove());
+      notice.append(close);
+      document.body.append(notice);
+      sendResponse({ ok: true }); return;
+    }
     if (message.type === "DISABLE_CROSSPOSTER") { sendResponse({ ok: true }); globalThis.CrossposterContent?.dispose?.(); return; }
     if (message.type === "SET_INLINE_ACTIONS") { setInlineActionsEnabled(message.enabled); sendResponse({ ok: true }); return; }
     if (message.type === "CAPTURE_POST") {
       const post = closestPost(lastContextTarget), adapter = currentAdapter();
       Promise.resolve(adapter?.prepareCapture?.({ post, target: lastContextTarget, helpers }))
         .then(() => sendResponse(capture(post)))
-        .catch(() => sendResponse(capture(post)));
+        .catch(error => {
+          if (adapter?.id === "mastodon") sendResponse({ error: error instanceof Error ? error.message : String(error) });
+          else sendResponse(capture(post));
+        });
       return true;
     }
     if (message.type === "VIDEO_INFO") { sendResponse(videoInfo()); return; }

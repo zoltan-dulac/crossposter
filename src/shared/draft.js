@@ -15,6 +15,7 @@ const PLATFORM_LABELS = Object.freeze({
   threads: "Threads",
   facebook: "Facebook",
   substack: "Substack",
+  mastodon: "Mastodon",
   web: "the web"
 });
 
@@ -57,7 +58,11 @@ export function creditByline(draft = {}) {
 // The text each destination receives; a post without text gets no credit.
 export function postText(draft = {}) {
   const body = String(draft.text || "").trim();
-  return draft.credit === false || !body ? body : `${creditPrefix(draft)}${body}`;
+  // A textual CW label is only a fallback, NOT equivalent to a native
+  // collapsible spoiler. The composer explicitly warns the user to review.
+  const cw = String(draft.sourceContentWarning || "").trim();
+  const bodyWithWarning = cw ? `CW: ${cw}\n\n${body}` : body;
+  return draft.credit === false || !bodyWithWarning ? bodyWithWarning : `${creditPrefix(draft)}${bodyWithWarning}`;
 }
 
 // Drafts saved by earlier builds carry the credit inside their text, leading
@@ -118,8 +123,11 @@ export function createDraft(input = {}) {
     sourceNetwork,
     sourceAuthor,
     sourceIsOwn,
+    sourceAccount: String(input.sourceAccount || "").slice(0, 255),
+    sourceContentWarning: String(input.sourceContentWarning || "").trim().slice(0, 500),
+    sourceSensitive: input.sourceSensitive === true,
     links,
-    media: Array.isArray(input.media) ? input.media.map(({ alt: _legacyAlt, ...item }) => item) : [],
+    media: Array.isArray(input.media) ? input.media.map(item => ({ ...item, alt: String(item?.alt || "").slice(0, 1500) })) : [],
     destinations: Array.isArray(input.destinations) ? input.destinations : [],
     createdAt: input.createdAt || Date.now()
   };
