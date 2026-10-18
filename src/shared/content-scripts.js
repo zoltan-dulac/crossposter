@@ -1,6 +1,7 @@
 import { mastodonOriginPattern, normalizeMastodonInstance } from "./mastodon.js";
 
 export const CONTENT_SCRIPT_CORE = "content.js";
+export const ALT_TEXT_HANDOFF_SCRIPT = "alt-text-handoff.js";
 // Covers a destination tab while a handoff fills it (handoff-overlay.js). It
 // starts with the document so it can hide the page's own loading too.
 export const HANDOFF_OVERLAY_SCRIPT = Object.freeze({ id: "crossposter-handoff-overlay", file: "handoff-overlay.js" });
@@ -72,7 +73,7 @@ export function contentScriptFilesForUrl(url, enabledPlatforms, mastodonInstance
   const adapter = platformContentScriptForUrl(url, mastodonInstance);
   const enabled = Array.isArray(enabledPlatforms) ? new Set(enabledPlatforms) : null;
   if (adapter && enabled && !adapter.sourceOnly && !enabled.has(adapter.platformId)) return [];
-  return adapter ? [CONTENT_SCRIPT_CORE, adapter.file] : [];
+  return adapter ? [CONTENT_SCRIPT_CORE, ALT_TEXT_HANDOFF_SCRIPT, adapter.file] : [];
 }
 
 export function registeredPlatformContentScripts(enabledPlatforms, mastodonInstance = "") {
@@ -81,7 +82,7 @@ export function registeredPlatformContentScripts(enabledPlatforms, mastodonInsta
   const scripts = platforms.map(item => ({
     id: item.id,
     matches: item.platformId === "mastodon" ? [mastodonOriginPattern(mastodonInstance)] : [...item.matches],
-    js: [CONTENT_SCRIPT_CORE, item.file],
+    js: [CONTENT_SCRIPT_CORE, ALT_TEXT_HANDOFF_SCRIPT, item.file],
     runAt: "document_idle",
     persistAcrossSessions: true,
     ...(item.allFrames ? { allFrames: true } : {})

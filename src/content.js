@@ -384,7 +384,14 @@
       });
     }
     const files = await handoffFiles(handoff.media || []);
-    return adapter.openComposer({ handoff, files, helpers });
+    const result = await adapter.openComposer({ handoff, files, helpers });
+    // Only write after ALL of the media was accepted into this composer.
+    // This is intentionally best-effort and never clicks a native Post action.
+    if (!result?.composerOpened || files.length === 0 || Number(result.mediaInserted || 0) < files.length) return result;
+    const transfer = globalThis.CrossposterAltText;
+    if (!transfer?.apply) return result;
+    const altText = await transfer.apply(network, handoff.media || [], helpers, handoff.handoffId || "");
+    return { ...result, altText };
   }
 
   function manualResult(error) { return { ok: true, composerOpened: false, textInserted: false, mediaInserted: 0, error }; }

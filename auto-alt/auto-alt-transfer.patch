@@ -1,0 +1,228 @@
+diff --git a/src/compose.js b/src/compose.js
+index 516d1a7..eb188e4 100644
+--- a/src/compose.js
++++ b/src/compose.js
+@@ -1744,6 +1744,11 @@ async function startNativeHandoff(networks, attemptId) {
+           lastModified: Date.now()
+         });
+       }
++      // Preserve the description against the exact File reference prepared
++      // for this handoff, even when earlier media could not be downloaded.
++      // Do not manufacture alt text for absent source descriptions.
++      reference = { ...reference, kind: item.kind || reference.kind,
++        ...(item.kind === "image" ? { alt: String(item.alt || "").slice(0, 1500) } : {}) };
+       prepared.push(reference);
+       preparedForHistory.push({ ...reference, sourceIndex: index });
+     } catch (error) {
+@@ -1849,3 +1854,4 @@ if (composeUrl.searchParams.get("history") === "1") {
+   history.replaceState(null, "", composeUrl.href);
+   openHistory();
+ }
++
+diff --git a/src/content.js b/src/content.js
+index 9759fab..7391463 100644
+--- a/src/content.js
++++ b/src/content.js
+@@ -377,7 +377,14 @@
+       });
+     }
+     const files = await handoffFiles(handoff.media || []);
+-    return adapter.openComposer({ handoff, files, helpers });
++    const result = await adapter.openComposer({ handoff, files, helpers });
++    // Only write after ALL of the media was accepted into this composer.
++    // This is intentionally best-effort and never clicks a native Post action.
++    if (!result?.composerOpened || files.length === 0 || Number(result.mediaInserted || 0) < files.length) return result;
++    const transfer = globalThis.CrossposterAltText;
++    if (!transfer?.apply) return result;
++    const altText = await transfer.apply(network, handoff.media || [], helpers, handoff.handoffId || "");
++    return { ...result, altText };
+   }
+ 
+   function manualResult(error) { return { ok: true, composerOpened: false, textInserted: false, mediaInserted: 0, error }; }
+diff --git a/src/shared/content-scripts.js b/src/shared/content-scripts.js
+index c995234..16775ac 100644
+--- a/src/shared/content-scripts.js
++++ b/src/shared/content-scripts.js
+@@ -1,4 +1,5 @@
+ export const CONTENT_SCRIPT_CORE = "content.js";
++export const ALT_TEXT_HANDOFF_SCRIPT = "alt-text-handoff.js";
+ // Covers a destination tab while a handoff fills it (handoff-overlay.js). It
+ // starts with the document so it can hide the page's own loading too.
+ export const HANDOFF_OVERLAY_SCRIPT = Object.freeze({ id: "crossposter-handoff-overlay", file: "handoff-overlay.js" });
+@@ -65,7 +66,7 @@ export function contentScriptFilesForUrl(url, enabledPlatforms) {
+   const adapter = platformContentScriptForUrl(url);
+   const enabled = Array.isArray(enabledPlatforms) ? new Set(enabledPlatforms) : null;
+   if (adapter && enabled && !adapter.sourceOnly && !enabled.has(adapter.platformId)) return [];
+-  return adapter ? [CONTENT_SCRIPT_CORE, adapter.file] : [];
++  return adapter ? [CONTENT_SCRIPT_CORE, ALT_TEXT_HANDOFF_SCRIPT, adapter.file] : [];
+ }
+ 
+ export function registeredPlatformContentScripts(enabledPlatforms) {
+@@ -74,7 +75,7 @@ export function registeredPlatformContentScripts(enabledPlatforms) {
+   const scripts = platforms.map(item => ({
+     id: item.id,
+     matches: [...item.matches],
+-    js: [CONTENT_SCRIPT_CORE, item.file],
++    js: [CONTENT_SCRIPT_CORE, ALT_TEXT_HANDOFF_SCRIPT, item.file],
+     runAt: "document_idle",
+     persistAcrossSessions: true,
+     ...(item.allFrames ? { allFrames: true } : {})
+diff --git a/src/shared/handoff-status.js b/src/shared/handoff-status.js
+index f3b0692..07bfec1 100644
+--- a/src/shared/handoff-status.js
++++ b/src/shared/handoff-status.js
+@@ -65,6 +65,10 @@ function networkState(handoff, { id }, entry, posted, closed, copyFrom) {
+     const textDone = !wantsText || result.textInserted === true, mediaDone = !wantsMedia || Number(result.mediaInserted || 0) > 0;
+     // The site took the upload but its preview could not be confirmed.
+     if (result.mediaUnverified && textDone) return { state: "check-media", tone: "action", text: "Check the media", detail: `${wantsText ? "Text is in. " : ""}Couldn’t confirm the media preview.` };
++    if (textDone && mediaDone && result.altText?.total > 0 && result.altText.status !== "none") {
++      return { state: "check-alt", tone: "action", text: "Review image descriptions",
++        detail: result.altText.reason || "Confirm each image’s alt text before posting." };
++    }
+     if (textDone && mediaDone && (result.textInserted || result.mediaInserted)) return { state: "filled", tone: "done", text: "Ready to review", detail: "" };
+     if (result.textInserted && !mediaDone) return { state: "partial", tone: "action", text: "Add the media", detail: `Text is in. Drag the media in ${copyFrom}.` };
+     if (Number(result.mediaInserted || 0) > 0 && !textDone) return { state: "partial", tone: "action", text: "Add the text", detail: `Media is in. Add the text ${copyFrom}.` };
+diff --git a/src/alt-text-handoff.js b/src/alt-text-handoff.js
+new file mode 100644
+index 0000000..d4e045f
+--- /dev/null
++++ b/src/alt-text-handoff.js
+@@ -0,0 +1,138 @@
++/* Crossposter experimental destination-image descriptions (native UI only).
++ * No network APIs, no publishing and no writes outside recognized alt editors.
++ * This script executes after content.js and before an adapter is registered.
++ */
++(() => {
++  const SUPPORTED = new Set(["mastodon", "bluesky", "x", "linkedin", "instagram", "facebook", "threads", "upscrolled", "substack"]);
++  const ALT_LABEL = /^(?:\+?alt(?:[. ]text)?|add (?:alt text|image description|description)|edit (?:alt text|image description|description)|write (?:alt text|image description)|describe (?:this )?image)$/i;
++  const FIELD_LABEL = /(?:^|\b)(?:alt(?:ernative)? text|image description|describe (?:this )?image|write alt text)(?:\b|$)/i;
++  const SAVE_LABEL = /^(?:save|done|apply|save changes|save alt text|save description)$/i;
++  const completed = new Set();
++  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
++  const label = el => [el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('placeholder'), el?.innerText, el?.textContent]
++    .map(s => String(s || '').replace(/\s+/g, ' ').trim()).find(Boolean) || '';
++  function visible(el) { return Boolean(el?.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects?.().length)); }
++  const buttons = root => [...root.querySelectorAll("button, [role='button']")].filter(el => visible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
++  const fields = root => [...root.querySelectorAll('textarea, input[type="text"], [contenteditable="true"][role="textbox"]')].filter(el => visible(el) && !el.disabled);
++  const isField = el => FIELD_LABEL.test([el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.getAttribute('id')].filter(Boolean).join(' '));
++  function dialog() { return [...document.querySelectorAll('[role="dialog"],dialog')].filter(visible).at(-1) || document; }
++  function altButtons(root = dialog()) { return buttons(root).filter(el => ALT_LABEL.test(label(el))); }
++  function altFields(root = dialog()) { return fields(root).filter(isField); }
++  function safeFill(el, value, helpers) {
++    // Don't overwrite authored destination descriptions. React-controlled
++    // textarea support comes from Crossposter's existing native input setter.
++    const current = el.isContentEditable ? el.textContent : el.value;
++    if (String(current || '').trim()) return String(current).trim() === value ? 'already' : 'occupied';
++    return helpers.setComposerText(el, value) ? 'filled' : 'failed';
++  }
++  async function appear(find, timeout = 4500) {
++    const started = Date.now();
++    while (Date.now() - started < timeout) {
++      const found = find();
++      if (found) return found;
++      await delay(150);
++    }
++    return null;
++  }
++  function saveButton(scope) {
++    // A global Save might mean "Save draft". Only save inside an actual
++    // alt-editing dialog, never elsewhere on the page.
++    if (!scope || scope === document) return null;
++    // Never click Post, Publish, Share, Next, Send, or a default dialog submit.
++    const candidates = buttons(scope).filter(el => SAVE_LABEL.test(label(el)) && !el.matches('button[type="submit"]'));
++    return candidates.length === 1 ? candidates[0] : null;
++  }
++  // Universal case: after upload a site exposes one labeled field per image.
++  // Only use this when counts match exactly; prevents mixing descriptions.
++  async function directFields(images, helpers) {
++    const inputs = await appear(() => {
++      const matches = altFields();
++      return matches.length === images.length ? matches : null;
++    }, 2400);
++    if (!inputs) return null;
++    let applied = 0;
++    for (let i = 0; i < images.length; i++) {
++      if (!images[i].alt) continue;
++      const written = safeFill(inputs[i], images[i].alt, helpers);
++      if (written === 'filled' || written === 'already') applied++;
++    }
++    return { applied, mode: 'direct fields', verified: false };
++  }
++  // Use the site's visible per-thumbnail +ALT controls. Do not fall back to
++  // arbitrary unlabeled Edit buttons or assume one image equals one button.
++  async function overlayButtons(images, helpers) {
++    const controls = await appear(() => {
++      const found = altButtons();
++      return found.length === images.length ? found : null;
++    }, 5000);
++    if (!controls) return null;
++    let applied = 0;
++    for (let i = 0; i < images.length; i++) {
++      const { alt } = images[i];
++      if (!alt) continue;
++      // The UI may replace thumbnail nodes after each Save. Reacquire them
++      // and verify the complete sequence still matches the image count.
++      const currentControls = altButtons();
++      if (currentControls.length !== images.length) break;
++      const control = currentControls[i];
++      if (!control?.isConnected || !visible(control)) continue;
++      const dialogsBefore = new Set([...document.querySelectorAll('[role="dialog"],dialog')].filter(visible));
++      control.click();
++      const editor = await appear(() => {
++        const scope = dialog();
++        const candidates = altFields(scope);
++        return candidates.length === 1 ? candidates[0] : null;
++      }, 4000);
++      if (!editor) continue;
++      const written = safeFill(editor, alt, helpers);
++      if (written !== 'filled' && written !== 'already') continue;
++      const scope = editor.closest('[role="dialog"],dialog');
++      // Do not click a generic "Save" on the original composer. The newly
++      // opened image-description dialog must contain the field and save action.
++      if (!scope || dialogsBefore.has(scope)) continue;
++      const save = saveButton(scope);
++      if (!save) continue; // Don't claim success if we couldn't save.
++      save.click();
++      applied++;
++      await delay(200);
++    }
++    return { applied, mode: 'image alt editor', verified: false };
++  }
++  // Instagram commonly puts caption and per-image alt fields under
++  // "Accessibility". Clicking only that named disclosure is safe.
++  async function instagramAccessibility(images, helpers) {
++    const root = dialog();
++    const controls = buttons(root).filter(el => /^accessibility(?: settings)?$/i.test(label(el)));
++    if (controls.length === 1) controls[0].click();
++    return directFields(images, helpers);
++  }
++  async function apply(network, media, helpers, handoffId = '') {
++    const images = (media || []).filter(item => item?.kind === 'image').map(item => ({ alt: String(item?.alt || '').trim().slice(0, 1500) }));
++    const described = images.filter(item => item.alt).length;
++    const summary = { total: images.length, described, applied: 0, status: 'none', reason: '' };
++    if (!images.length) return summary;
++    if (!described) return { ...summary, status: 'missing', reason: 'No source alt text was available. Add image descriptions before publishing.' };
++    if (!SUPPORTED.has(network)) return { ...summary, status: 'review', reason: 'No automatic alt-text editor is known for this destination.' };
++    const key = `${network}:${handoffId}:${media.map(item => item.mediaId || item.name || '').join('|')}`;
++    if (completed.has(key)) return { ...summary, status: 'review', reason: 'Descriptions were already attempted. Check each image before posting.' };
++    completed.add(key); // retry must not overwrite previously edited destination text
++    // Crossposter preserves source order when making File objects. Mixed video
++    // + image albums are not supported: target ordering could differ.
++    if ((media || []).some(item => item.kind === 'video')) return { ...summary, status: 'review', reason: 'Mixed image/video albums require manual description matching.' };
++    try {
++      let result;
++      if (network === 'instagram') result = await instagramAccessibility(images, helpers);
++      else result = await directFields(images, helpers);
++      if (!result) result = await overlayButtons(images, helpers);
++      if (!result) return { ...summary, status: 'review', reason: 'Alt-text controls were not recognized. Add descriptions in the native editor.' };
++      const status = result.applied === described ? 'attempted' : 'review';
++      return { ...summary, applied: result.applied, status,
++        reason: result.applied === described
++          ? 'Descriptions entered; confirm each image saved the correct text before publishing.'
++          : `Entered ${result.applied} of ${described} descriptions. Finish the rest manually.` };
++    } catch (error) {
++      return { ...summary, status: 'review', reason: `Automatic descriptions could not be completed: ${error?.message || String(error)}` };
++    }
++  }
++  globalThis.CrossposterAltText = Object.freeze({ apply });
++})();

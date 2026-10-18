@@ -1,0 +1,12 @@
+Blusky - no alt text.  THere is a button tag with an aria label of "Add alt text" that needs to be pressed.  When pressed, another dialog appears with a textarea that has an aria-label of "Alt text". Fill that in with the alt text, and then click the button that has aria-label of "Save".
+
+Upscroll - alt text (but it has a character limit that needs to be looked into)
+
+Mastodon - button with innerText of "ALT" needs to be pressed after image is uploaded.  Then a dialog appears with a textarea that has a placeholder of "Describe this for people with visual impairments…".  Fill that in with the alt text, then click the button that an innerText of "Done".
+
+Facebook - div with role button with aria-label of "Edit media" needs to be pressed after image is uploaded.  Then a dialog appears with a div with role button that has innerText of Alternative text.  When that is clicked, a textarea appears that is surrounded by a label, so the textareas accessible name is "Custom alt text". Fill that in with the alt text, then click the div with role  button that an aria-label of "Done".
+
+X - no alt text.  THere is a button tag with an aria-label of "Edit media" that needs to be pressed.  When pressed, another dialog appears with a link with role tab that has an aria-label of "Edit image description".  Click that, and textarea that has an name attribute set to "altTextInput". Fill that in with the alt text, and then click the button that has innerText set to "Save".
+
+Threads - doesn't have image uploaded at all.
+

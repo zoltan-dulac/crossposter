@@ -65,6 +65,10 @@ function networkState(handoff, { id }, entry, posted, closed, copyFrom) {
     const textDone = !wantsText || result.textInserted === true, mediaDone = !wantsMedia || Number(result.mediaInserted || 0) > 0;
     // The site took the upload but its preview could not be confirmed.
     if (result.mediaUnverified && textDone) return { state: "check-media", tone: "action", text: "Check the media", detail: `${wantsText ? "Text is in. " : ""}Couldn’t confirm the media preview.` };
+    if (textDone && mediaDone && result.altText?.total > 0 && result.altText.status !== "none") {
+      return { state: "check-alt", tone: "action", text: "Review image descriptions",
+        detail: result.altText.reason || "Confirm each image’s alt text before posting." };
+    }
     if (textDone && mediaDone && (result.textInserted || result.mediaInserted)) return { state: "filled", tone: "done", text: "Ready to review", detail: "" };
     if (result.textInserted && !mediaDone) return { state: "partial", tone: "action", text: "Add the media", detail: `Text is in. Drag the media in ${copyFrom}.` };
     if (Number(result.mediaInserted || 0) > 0 && !textDone) return { state: "partial", tone: "action", text: "Add the text", detail: `Media is in. Add the text ${copyFrom}.` };

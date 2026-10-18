@@ -1783,6 +1783,11 @@ async function startNativeHandoff(networks, attemptId) {
           lastModified: Date.now()
         });
       }
+      // Preserve the description against the exact File reference prepared
+      // for this handoff, even when earlier media could not be downloaded.
+      // Do not manufacture alt text for absent source descriptions.
+      reference = { ...reference, kind: item.kind || reference.kind,
+        ...(item.kind === "image" ? { alt: String(item.alt || "").slice(0, 1500) } : {}) };
       prepared.push(reference);
       preparedForHistory.push({ ...reference, sourceIndex: index });
     } catch (error) {
