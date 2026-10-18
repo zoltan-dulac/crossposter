@@ -745,3 +745,9 @@ input, select { color: var(--ink); background: var(--surface); }
 .mastodon-instance-setting { display: grid; gap: 6px; margin: 14px 0 5px; font-size: 13px; }
 .mastodon-instance-setting input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
 .mastodon-instance-setting input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Mastodon source warnings and accessible captured alt text. */
+.capture-notice { padding: 12px; margin: 12px 0; border: 1px solid currentColor; border-radius: 6px; font-size: 13px; line-height: 1.5; }
+.captured-alt { max-width: 100%; padding: 5px; font-size: 12px; overflow-wrap: anywhere; }
+.captured-alt summary { cursor: pointer; }
+.captured-alt p { user-select: text; white-space: pre-wrap; }

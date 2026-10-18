@@ -440,6 +440,17 @@ function renderCredit() {
 
 function renderMeta() {
   renderCredit();
+  const notice = document.querySelector("#mastodonCaptureNotice");
+  const warning = String(draft.sourceContentWarning || "").trim();
+  const sensitive = draft.sourceSensitive === true;
+  notice.hidden = !(warning || sensitive);
+  notice.replaceChildren();
+  if (warning || sensitive) {
+    const title = document.createElement("strong");
+    title.textContent = warning ? `Source content warning: ${warning}` : "Source marks media as sensitive";
+    notice.append(title, document.createElement("br"),
+      "Review the destination's visibility, native content-warning controls, and media descriptions before posting. A CW text prefix does not hide content.");
+  }
   document.querySelector("#count").textContent = `${postText(draft).length} / 3000`;
   const source = document.querySelector("#source");
   if (!draft.sourceUrl) { source.textContent = "Fresh post"; return; }
@@ -642,7 +653,9 @@ function renderMedia() {
     // A text image's own slide number, which reordering doesn't change.
     const textCard = item.textCard ? (item.textCard.slides > 1 ? `Text image ${item.textCard.slide} of ${item.textCard.slides}` : "Text image") : "";
     const edits = [item.resolveError || "", item.prepareError || "", item.trim ? `Clipped to ${formatTime(item.trim.duration)}` : "", item.crop ? `Cropped ${item.crop}` : "", item.edited ? "Edited image" : "", textCard].filter(Boolean);
-    const note = edits.length ? `<figcaption>${escapeAttr(edits.join(" · "))}</figcaption>` : "";
+    const alt = String(item.alt || "").trim();
+    const altNote = alt ? `<details class="captured-alt"><summary>Original ${video ? "media" : "image"} description</summary><p>${escapeAttr(alt)}</p></details>` : "";
+    const note = (edits.length ? `<figcaption>${escapeAttr(edits.join(" · "))}</figcaption>` : "") + altNote;
     const poster = video && item.poster ? ` poster="${escapeAttr(item.poster)}"` : "";
     const source = video && (isStreamMedia(item) || item.resolving || item.resolveError) ? "" : ` src="${escapeAttr(item.url)}"`;
     const disabled = busyMedia || item.resolveError ? " disabled" : "";
@@ -1668,8 +1681,15 @@ async function publish() {
   // Request each selected platform's complete page/API/media bundle while the
   // extension-page click still carries a user gesture. Recheck the source too
   // in case its access was revoked while this draft was open.
-  const hostPermissionRequest = requestCompletePlatformPermissions(ext.permissions, [draft.sourceNetwork, ...networkIds],
-    networkIds.includes("mastodon") ? [mastodonOriginPattern(mastodonInstance)] : []);
+  const mastodonMediaHosts = draft.sourceNetwork === "mastodon"
+    ? [...new Set(draft.media.map(item => {
+      try { const url = new URL(item.url); return url.protocol === "https:" ? `${url.origin}/*` : ""; }
+      catch { return ""; }
+    }).filter(Boolean))] : [];
+  const hostPermissionRequest = requestCompletePlatformPermissions(ext.permissions, [draft.sourceNetwork, ...networkIds], [
+    ...(networkIds.includes("mastodon") ? [mastodonOriginPattern(mastodonInstance)] : []),
+    ...mastodonMediaHosts
+  ]);
   // Firefox: sidebarAction.open() only works inside a user-action handler and
   // the gesture does not survive messaging to the background — open the
   // sidebar here, synchronously, while the Continue click is still live.

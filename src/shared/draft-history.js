@@ -24,6 +24,9 @@ export function draftHistoryEntry(draft = {}, media = [], savedAt = Date.now()) 
       sourceNetwork: String(draft.sourceNetwork || "web"),
       sourceAuthor: String(draft.sourceAuthor || ""),
       sourceIsOwn: draft.sourceIsOwn === true,
+      sourceAccount: String(draft.sourceAccount || ""),
+      sourceContentWarning: String(draft.sourceContentWarning || ""),
+      sourceSensitive: draft.sourceSensitive === true,
       destinations: Array.isArray(draft.destinations) ? [...draft.destinations] : [],
       createdAt: draft.createdAt || savedAt,
       media: historyMedia(draft.media, media)
@@ -77,6 +80,7 @@ function historyMedia(sourceMedia = [], storedMedia = []) {
       size: stored.size || 0,
       lastModified: stored.lastModified || savedTimestamp(item),
       filename: item.filename || stored.name || "",
+      ...(item.alt ? { alt: item.alt } : {}),
       ...(item.trim ? { trim: item.trim } : {}),
       ...(item.crop ? { crop: item.crop } : {}),
       ...(item.edited ? { edited: true } : {}),
