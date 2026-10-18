@@ -654,7 +654,12 @@ function renderMedia() {
     const textCard = item.textCard ? (item.textCard.slides > 1 ? `Text image ${item.textCard.slide} of ${item.textCard.slides}` : "Text image") : "";
     const edits = [item.resolveError || "", item.prepareError || "", item.trim ? `Clipped to ${formatTime(item.trim.duration)}` : "", item.crop ? `Cropped ${item.crop}` : "", item.edited ? "Edited image" : "", textCard].filter(Boolean);
     const alt = String(item.alt || "").trim();
-    const altNote = alt ? `<details class="captured-alt"><summary>Original ${video ? "media" : "image"} description</summary><p>${escapeAttr(alt)}</p></details>` : "";
+    // Present source descriptions directly below the image, including their
+    // absence. This is informational: uploading to a destination still
+    // requires the user to supply alt in that platform's native editor.
+    const altNote = !video && !item.textCard && Boolean(draft.sourceUrl)
+      ? `<div class="captured-alt"><strong>Source image alt text:</strong> <span>${alt ? escapeAttr(alt) : "Not available from the source post."}</span></div>`
+      : "";
     const note = (edits.length ? `<figcaption>${escapeAttr(edits.join(" · "))}</figcaption>` : "") + altNote;
     const poster = video && item.poster ? ` poster="${escapeAttr(item.poster)}"` : "";
     const source = video && (isStreamMedia(item) || item.resolving || item.resolveError) ? "" : ` src="${escapeAttr(item.url)}"`;

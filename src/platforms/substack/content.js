@@ -272,7 +272,19 @@
 
   function attachmentMedia(attachments, post) {
     return attachments.map(attachment => {
-      if (attachment?.type === "image" && /^https?:/i.test(attachment.imageUrl || "")) return { kind: "image", url: attachment.imageUrl };
+      if (attachment?.type === "image" && /^https?:/i.test(attachment.imageUrl || "")) {
+        // Notes API field names vary; use only fields explicitly named as alt
+        // text (not a generic image caption or AI-generated summary).
+        const alt = attachment.altText ?? attachment.alt_text ?? attachment.imageAltText ?? attachment.imageAlt ?? attachment.alt;
+        // Prefer the authored alt in the API. The rendered image is a fallback
+        // only when it has the same exact src, avoiding wrong slide mapping.
+        const domImage = [...(post?.querySelectorAll?.("img") || [])]
+          .find(img => (img.currentSrc || img.src) === attachment.imageUrl);
+        return {
+          kind: "image", url: attachment.imageUrl,
+          alt: String(alt ?? domImage?.getAttribute("alt") ?? "").slice(0, 1500)
+        };
+      }
       if (attachment?.type === "video" && attachment.media_upload_id) {
         const video = [...(post?.querySelectorAll?.("video[data-video-id]") || [])].find(node => node.dataset?.videoId === attachment.media_upload_id);
         return { kind: "video", url: videoUrl(attachment.media_upload_id), poster: video?.poster || "" };

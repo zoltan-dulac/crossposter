@@ -96,7 +96,21 @@
     },
     captureMedia: ({ post, helpers }) => {
       const resolved = instagramMetadataMedia(metadataByPost.get(post));
-      if (resolved.length) return resolved;
+      if (resolved.length) {
+        // Some Instagram metadata formats contain no accessibility_caption.
+        // Fall back to page alt text only where its image count matches, so a
+        // carousel's visible slide cannot mislabel a different slide.
+        const sourceImages = instagramPostImages(post);
+        const imageItems = resolved.filter(item => item.kind === "image");
+        if (sourceImages.length === imageItems.length) {
+          let nextImage = 0;
+          return resolved.map(item => item.kind !== "image" ? item : {
+            ...item,
+            alt: item.alt || String(sourceImages[nextImage++]?.getAttribute("alt") || "").slice(0, 1500)
+          });
+        }
+        return resolved;
+      }
       const video = post.querySelector("video");
       if (video) {
         const media = helpers.mediaFromNodes([video]);
@@ -313,7 +327,10 @@
       const bestVideo = largestCandidate(videos);
       const bestImage = largestCandidate(images);
       if (bestVideo) return { kind: "video", url: bestVideo.url, poster: bestImage?.url || "" };
-      return bestImage ? { kind: "image", url: bestImage.url } : null;
+      return bestImage ? {
+        kind: "image", url: bestImage.url,
+        alt: String(entry.accessibility_caption ?? entry.alt_text ?? entry.altText ?? entry.image_alt_text ?? "").slice(0, 1500)
+      } : null;
     }).filter(Boolean).slice(0, 4);
   }
 

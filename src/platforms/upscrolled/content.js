@@ -11,7 +11,17 @@
       const video = upscrolledVideoDetails(post, helpers);
       return video.url
         ? [{ kind: "video", url: video.url, poster: video.poster }]
-        : helpers.mediaFromNodes(post.querySelectorAll("img[alt='Post image']"));
+        : helpers.mediaFromNodes([...post.querySelectorAll("img")].filter(node => {
+          const width = node.naturalWidth || node.width || 0;
+          const height = node.naturalHeight || node.height || 0;
+          const src = node.currentSrc || node.src || "";
+          const alt = `${node.getAttribute("alt") || ""} ${node.getAttribute("aria-label") || ""}`;
+          return /^https?:/i.test(src) && (
+            node.getAttribute("alt") === "Post image" ||
+            (width >= 180 && height >= 100 && !node.closest("a[href^='/@']")
+              && !/(?:avatar|profile|emoji|logo)/i.test(alt))
+          );
+        }));
     },
     sourceAuthor: ({ post, helpers }) => {
       const profiles = [...post.querySelectorAll("a[href^='/@']")];

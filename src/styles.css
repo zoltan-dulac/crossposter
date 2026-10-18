@@ -751,3 +751,16 @@ input, select { color: var(--ink); background: var(--surface); }
 .captured-alt { max-width: 100%; padding: 5px; font-size: 12px; overflow-wrap: anywhere; }
 .captured-alt summary { cursor: pointer; }
 .captured-alt p { user-select: text; white-space: pre-wrap; }
+
+/* Always-visible alternative text copied from the source image. */
+.media-tile .captured-alt {
+  display: block;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.media-tile .captured-alt strong { font-weight: 600; }

@@ -5,7 +5,9 @@ export function chooseContextMedia(info = {}, captured = {}) {
   // accurate than Chrome's raw mediaType (which reports that poster as image).
   if (captured.capturedFromPost === true && capturedMedia.length) return capturedMedia;
   if (info.srcUrl) {
-    return [{ kind: info.mediaType === "video" ? "video" : "image", url: info.srcUrl }];
+    const match = capturedMedia.find(item => item.url === info.srcUrl);
+    return [{ kind: info.mediaType === "video" ? "video" : "image",
+      url: info.srcUrl, ...(match?.alt ? { alt: match.alt } : {}) }];
   }
   return capturedMedia;
 }

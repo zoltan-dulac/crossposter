@@ -130,7 +130,18 @@
       return [copy, missingLinks.join("\n")].filter(Boolean).join("\n\n");
     },
     captureMedia: ({ post, helpers }) => {
-      const nodes = post.querySelectorAll("video, a[href*='/post/'][href$='/media'] img, img[alt^='Photo by']");
+      const nodes = [...post.querySelectorAll("video, img")].filter(node => {
+        if (node.tagName === "VIDEO") return true;
+        const width = node.naturalWidth || node.width || 0;
+        const height = node.naturalHeight || node.height || 0;
+        const src = node.currentSrc || node.src || "";
+        const alt = `${node.getAttribute("alt") || ""} ${node.getAttribute("aria-label") || ""}`;
+        return /^https?:/i.test(src) && (
+          node.closest("a[href*='/post/'][href$='/media']") || /^Photo by/i.test(alt) ||
+          (width >= 180 && height >= 100 && !node.closest("a[href^='/@']")
+            && !/(?:avatar|profile|emoji|logo)/i.test(alt))
+        );
+      });
       return helpers.mediaFromNodes(nodes);
     },
     sourceUrl: ({ post }) => {

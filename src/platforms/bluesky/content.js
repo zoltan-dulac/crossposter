@@ -313,7 +313,10 @@
     const type = embed?.["$type"] || "";
     if (type.startsWith("app.bsky.embed.recordWithMedia")) return blueskyEmbedMedia(embed.media);
     if (type.startsWith("app.bsky.embed.images")) {
-      return (embed.images || []).map(image => ({ kind: "image", url: image.fullsize || image.thumb || "" }))
+      return (embed.images || []).map(image => ({
+        kind: "image", url: image.fullsize || image.thumb || "",
+        alt: String(image.alt ?? "").slice(0, 1500)
+      }))
         .filter(item => /^https?:/i.test(item.url)).slice(0, 4);
     }
     if (type.startsWith("app.bsky.embed.video") && /^https?:/i.test(embed.playlist || "")) {

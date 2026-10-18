@@ -307,6 +307,12 @@
     return [...nodes].map(node => ({
       kind: node.tagName === "VIDEO" ? "video" : "image",
       url: node.currentSrc || node.src,
+      // Preserve the actual image alt attribute, including an explicitly
+      // empty one. If it is absent, some networks expose a description using
+      // aria-label. Do not invent descriptions from filenames or captions.
+      ...(node.tagName === "IMG" ? {
+        alt: String(node.getAttribute("alt") ?? node.getAttribute("aria-label") ?? "").slice(0, 1500)
+      } : {}),
       poster: node.tagName === "VIDEO" ? node.poster || "" : "",
       sources: node.tagName === "VIDEO" ? node.getAttribute("data-sources") || null : null
     })).filter(item => item.url && !item.url.startsWith("data:")).slice(0, 4);
