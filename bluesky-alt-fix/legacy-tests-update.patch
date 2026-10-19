@@ -1,0 +1,20 @@
+--- a/auto-alt/tests/test-auto-alt.mjs
++++ b/auto-alt/tests/test-auto-alt.mjs
+@@ -31,7 +31,7 @@
+ }
+ test('a single visible alt editor gets source alt text, never posts',async()=>{
+  const f=fixture(), field=f.element({placeholder:'Alt text'}); f.fields.push(field);
+- const result=await f.apply('bluesky',[{kind:'image',alt:'A blue bicycle'}],f.helpers,'a');
++ const result=await f.apply('mastodon',[{kind:'image',alt:'A blue bicycle'}],f.helpers,'a');
+  assert.equal(field.value,'A blue bicycle'); assert.equal(result.applied,1);assert.equal(result.status,'attempted');
+  assert.deepEqual(f.events,['fill:A blue bicycle']);
+ });
+@@ -59,7 +59,7 @@
+  const input=f.element({placeholder:'Alt text'});
+  const post=f.element({text:'Post'}), save=f.element({text:'Save'});
+  f.controls.push(f.element({text:'+ALT',onClick(){f.openDialog();f.fields.push(input);f.controls.push(save);}}),post);
+- const r=await f.apply('bluesky',[{kind:'image',alt:'Nice hat'}],f.helpers,'f');
++ const r=await f.apply('x',[{kind:'image',alt:'Nice hat'}],f.helpers,'f');
+  assert.equal(r.applied,1);assert.deepEqual(f.events,['click:+ALT','fill:Nice hat','click:Save']);
+ });
+ test('mismatched alt controls do not risk wrong image mapping',async()=>{
