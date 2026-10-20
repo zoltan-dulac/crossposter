@@ -16,7 +16,9 @@
     like: { paths: ["M16.792 3.904", "M34.6 3.1"], labels: ["like", "unlike"] },
     comment: { paths: ["M20.656 17.008"], labels: ["comment"] },
     share: { paths: ["M13.973 20.046", "M22 3L9.218 10.083", "M22 3 9.218 10.083"], labels: ["share"] },
-    create: { paths: ["M21 11h-8V3a1", "M2 12v3.45c0 2.849"], labels: ["new post", "create"] }
+    create: { paths: ["M21 11h-8V3a1", "M2 12v3.45c0 2.849"], labels: ["new post", "create"] },
+    // "Post" in the Create menu (stacked frames with a play triangle).
+    post: { paths: ["m18.509 14.757", "M18.509 14.757"], labels: ["post"] }
   });
   const hasIcon = element => Boolean(element?.querySelector?.("svg"));
   const iconButtons = root => [...(root?.querySelectorAll?.("button, [role='button']") || [])].filter(hasIcon);
@@ -147,17 +149,40 @@
       if (!files.length) return { ...helpers.manualResult("Instagram requires a photo or video. Add media to this crosspost first."), reason: "needs-media" };
       const report = stage => helpers.reportComposerStage?.(handoff.handoffId, "instagram", stage);
       const fileInput = () => helpers.findVisible("[role='dialog']") && helpers.queryAllDeep("[role='dialog'] input[type='file']").find(input => !input.disabled) || null;
+      // Professional accounts get a Create menu (Post, Live video, Ad) instead
+      // of the upload dialog; its Post item opens the dialog.
+      const postItem = () => helpers.queryAllDeep("a, [role='link'], [role='button'], button")
+        .find(element => !element.closest("article, [role='dialog'], [aria-hidden='true']")
+          && helpers.isVisible(element) && helpers.iconMatches(element, ICONS.post)) || null;
+      const notFound = () => helpers.composerNotFound("Open Instagram’s Create dialog, then use the Crossposter sidebar.");
       report("locate");
       let input = fileInput();
       if (!input) {
-        const launch = helpers.findIconControl?.(document, ICONS.create, "a, [role='link'], [role='button'], button")
-          || document.querySelector("svg[aria-label='New post'], svg[aria-label='Create']")?.closest("a, [role='link'], [role='button'], button")
-          || helpers.findClickable("create", document, element => !element.closest("[role='dialog']"), false);
-        if (!launch) return helpers.composerNotFound("Open Instagram’s Create dialog, then use the Crossposter sidebar.");
-        report("open");
-        launch.click();
-        try { input = await helpers.waitForElement(fileInput); }
-        catch { return helpers.composerNotFound("Open Instagram’s Create dialog, then use the Crossposter sidebar."); }
+        let item = postItem();
+        if (!item) {
+          const launch = helpers.findIconControl?.(document, ICONS.create, "a, [role='link'], [role='button'], button")
+            || document.querySelector("svg[aria-label='New post'], svg[aria-label='Create']")?.closest("a, [role='link'], [role='button'], button")
+            || helpers.findClickable("create", document, element => !element.closest("[role='dialog']"), false);
+          if (!launch) return notFound();
+          report("open");
+          launch.click();
+          let opened;
+          try {
+            opened = await helpers.waitForElement(() => {
+              const found = fileInput();
+              if (found) return { input: found };
+              const menuItem = postItem();
+              return menuItem && { item: menuItem };
+            });
+          } catch { return notFound(); }
+          ({ input = null, item = null } = opened);
+        }
+        if (item) {
+          report("open");
+          item.click();
+          try { input = await helpers.waitForElement(fileInput); }
+          catch { return notFound(); }
+        }
       }
       report("attach");
       const mediaInserted = helpers.attachFilesToInput(files, input);
