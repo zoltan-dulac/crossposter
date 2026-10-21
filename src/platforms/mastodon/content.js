@@ -150,24 +150,72 @@
     videoInfo: ({ post }) => ({ source: 'mastodon', src: cache.get(post)?.media.find(item => item.kind === 'video')?.url || '' }),
     async openComposer({ handoff, files, helpers }) {
       const report = stage => helpers.reportComposerStage?.(handoff.handoffId, 'mastodon', stage);
-      const findField = () => helpers.queryAllDeep(COMPOSER).find(helpers.isVisible) || null;
+      const textFieldSelector = [
+        'form.compose-form textarea.compose-form__input',
+        'form.compose-form textarea.autosuggest-textarea__textarea',
+        'form.compose-form textarea:not(#cw-spoiler-input)',
+        'textarea.compose-form__input',
+        '[role="dialog"] textarea:not(#cw-spoiler-input)',
+        '[role="dialog"] [contenteditable="true"][role="textbox"]',
+        '[role="dialog"] [contenteditable="true"]',
+        '[role="region"][aria-label="New Post"] textarea:not(#cw-spoiler-input)'
+      ].join(', ');
+      const isBodyEditor = node => node && !node.closest?.('.spoiler-input, .search, [role="search"]')
+        && !/content warning/i.test(node.getAttribute?.('placeholder') || '')
+        && !/content warning/i.test(node.getAttribute?.('aria-label') || '');
+      const findField = () => helpers.queryAllDeep(textFieldSelector).find(node => helpers.isVisible(node) && isBodyEditor(node)) || null;
+      // 4.x embeds the composer. Mastodon 5.0 (deployed to mastodon.social
+      // October 20, 2026) only mounts the pop-out after "New post" is pressed.
+      // Never click "Post": that would publish without user confirmation.
       report('locate');
-      let field;
-      try { field = await helpers.waitForElement(findField, 15000); }
-      catch { return helpers.composerNotFound('Mastodon’s composer was not found. Sign in to the configured instance and use the Crossposter sidebar.'); }
+      let field = findField();
+      if (!field) {
+        report('open');
+        const launcher = () => helpers.queryAllDeep('button, a, [role="button"]').find(node => {
+          
+          if (node.innerText === 'New Post') {
+             console.log(`found '${node.innerText}'`, node);
+          }
+          if (!helpers.isVisible(node) || node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
+          const labels = [
+            node.getAttribute('aria-label'),
+            node.getAttribute('title'),
+            node.innerText,
+            node.textContent
+          ];
+
+          const composerLabels = /^(new post|compose|create post|write a post|new toot)$/i;
+
+          return labels.some(label =>
+            label && composerLabels.test(label.trim())
+          );
+        }) || null;
+        // The launcher itself is async: allow navigation and React hydration.
+        const start = await helpers.waitForElement(() => findField() || launcher(), 15000).catch(() => null);
+        if (!start) return helpers.composerNotFound('Neither a Mastodon composer nor a New post button was found. Check that you are signed in.');
+        if (isBodyEditor(start) && start.matches?.('textarea, [contenteditable="true"]')) field = start;
+        else {
+          start.click();
+          field = await helpers.waitForElement(findField, 15000).catch(() => null);
+        }
+      }
+      if (!field) return helpers.composerNotFound('The Mastodon New post button was activated, but no editable composer appeared.');
       report('fill-text');
-      const root = field.closest('form.compose-form') || field;
+      const root = helpers.closestDeep(field, 'form.compose-form, [role="dialog"], dialog, [role="region"]') || field;
       const textInserted = await helpers.fillComposerTextOnce(field, root, handoff.text || '', { method: 'set' });
       let mediaInserted = 0;
       if (files.length) {
         report('attach');
+        // In 5.0 the file input belongs to the pop-out, not the old sidebar.
         let input = helpers.findCompatibleFileInput(files, root);
-        if (!input) { try { input = await helpers.waitForElement(() => helpers.findCompatibleFileInput(files, document), 4000); } catch {} }
+        if (!input) input = await helpers.waitForElement(() => helpers.findCompatibleFileInput(files, root)
+          || helpers.findCompatibleFileInput(files, document), 6000).catch(() => null);
         if (input) { try { mediaInserted = helpers.attachFilesToInput(files, input); } catch {} }
       }
       if (textInserted && (!files.length || mediaInserted)) report('ready');
       return { ok: true, composerOpened: true, textInserted, mediaInserted,
-        error: [!textInserted && 'Mastodon did not accept the text.', files.length && !mediaInserted && 'Attach the media manually.'].filter(Boolean).join(' ') };
+        error: [!textInserted && 'Mastodon did not accept the text.',
+          files.length && !mediaInserted && 'Attach the media manually.'].filter(Boolean).join(' ') };
     }
   });
 })();
