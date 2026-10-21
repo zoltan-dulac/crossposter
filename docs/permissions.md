@@ -36,7 +36,10 @@ Host permissions fall into three groups:
   resolving a post's direct video renditions without any third-party service.
 - **Platform origins** (`upscrolled.com`, `x.com`, `twitter.com`, `linkedin.com`,
   `bsky.app`, `instagram.com`, `threads.com`, `facebook.com`, `substack.com`): platform-specific
-  capture and native-composer automation. Content scripts are registered dynamically
+  capture and native-composer automation. `www.linkedin.com` also resolves a
+  captured post's `lnkd.in` links: one cookie-less request per link to
+  LinkedIn's leaving-LinkedIn page (`/safety/go/?url=`), which names the
+  target. Content scripts are registered dynamically
   only for platforms enabled in Settings; disabling a platform unregisters its scripts
   without changing the extension's installed permission set.
 

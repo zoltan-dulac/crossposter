@@ -11,3 +11,4 @@ src/vendor/*
 !src/vendor/fonts/**
 site/tools/.preview/
 site/tools/audio.wav
+*.orig
