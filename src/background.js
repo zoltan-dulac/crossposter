@@ -783,7 +783,7 @@ async function cancelPendingCapture(token) {
 }
 
 async function openCapturedPost(captured = {}, videoHint, options = {}) {
-  // Resolve shortened link URLs (X's t.co) before the draft is built so the
+  // Resolve shortened link URLs (X's t.co, LinkedIn's lnkd.in) before the draft is built so the
   // composer text and link cards carry the real destinations.
   captured = await expandCapturedLinks(captured);
   const media = Array.isArray(captured.media) ? captured.media : [];
